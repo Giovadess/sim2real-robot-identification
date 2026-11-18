@@ -2,7 +2,7 @@
 
 Updated 2026-11-19
 
-**Status: closed for the actuator-level identification of the fixed-base sideways rig.** Both backends (MuJoCo and Isaac Lab) are fitted on 20 real recordings and validated on a held-out one. See "Isaac Lab fit" and "Scope and limits" below. The sections written on 2026-11-18 that follow are kept as the history of how the data were collected.
+**Status: closed. Same scope and method as the go2 identification (49 motor parameters, fixed-base rig), plus a held-out validation.** Both backends (MuJoCo and Isaac Lab) are fitted on 20 real recordings and validated on a held-out one. See "Isaac Lab fit" and "Scope and limits" below. The sections written on 2026-11-18 that follow are kept as the history of how the data were collected.
 
 ## Current setup
 
@@ -45,19 +45,18 @@ Updated 2026-11-19
 
 - Task `IsaacLab-Pace-b2`, CMA-ES, 4096 envs on the laptop GPU, 20 recordings (all except `sideways_14`); stopped at iteration 144, best score 0.00283 -> 0.00072. Details and command: `B2_ISAAC_FIT.md`. Parameters: `robot_model/b2/isaaclab_identified_parameters.py`.
 - Held-out replay of the fitted parameters on `sideways_14` (`sysid_isaaclab/replay_heldout.py`): rms 0.0087 rad against 0.0377 rad for a nominal model (4.3x lower); training recordings 0.0076-0.0080 rad. The MuJoCo held-out result was consistent (about 60% lower error on the same recording).
-- Isaac and MuJoCo agree on per-joint armature (correlation 0.97) and friction (0.99). They do not agree on damping (0.09): it is weakly identified.
+- Isaac and MuJoCo agree on per-joint armature (correlation 0.97) and friction (0.99). They do not agree on damping (0.09); dry friction and damping are partly interchangeable at this speed.
 - The fitted delay (0.61 steps) is truncated to 0 by the simulator.
 
 ## Scope and limits
 
-What the identification covers: armature, friction and viscous damping of the 12 position-controlled joints at kp = 100, kd = 5, on a fixed-base rig, for slow motions (speed scale 0.3, joint speed up to about 1 rad/s).
+What the identification covers: the same 49-parameter set as the committed go2 result (armature, viscous damping, friction, bias, delay) for the 12 position-controlled joints at kp = 100, kd = 5, on a fixed-base rig, for slow motions (speed scale 0.3, joint speed up to about 1 rad/s). The optional mass, CoM and inertia identification of `my_fit.py` was not run, as for go2; with a fixed base, armature and link inertia about the joint axis are not separable (see `sysid_isaaclab/README.md`).
 
-Not covered or not verified:
-- Link masses and inertias (not identified; `--identify-link-mass` was not run).
-- Other gains, faster or loaded motions, ground contact and standing or walking: no data.
-- Joint velocity limits (23 / 23 / 14 rad/s) are assumed; the user manual has no joint specs.
-- Damping per joint should not be trusted individually.
-- One held-out recording only. The real low-level command path and an independent emergency stop remain unvalidated (see above).
+Open points:
+- Damping: on B2 the Isaac and MuJoCo per-joint damping values do not match. This is an observation about this fit; it is not known whether the same happens for go2.
+- Joint velocity limits (23 / 23 / 14 rad/s) are assumed; the user manual has no joint specs. They do not matter at the recorded speeds.
+- Only one recording was held out, and there is no data at other gains, faster or loaded motions, or with ground contact.
+- The real low-level command path and an independent emergency stop remain unvalidated (see above).
 
 ## Relevant files
 

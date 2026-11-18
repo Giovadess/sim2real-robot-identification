@@ -11,4 +11,4 @@ delay = 0.6132869720458984  # sim steps (dt = 0.005 s); the simulator truncates 
 Kp = 100.0
 Kd = 5.0
 
-# Damping is weakly identified (slow trajectory; dry friction and damping are partly interchangeable).
+# Per-joint damping differs from the MuJoCo fit of the same data; dry friction and damping are partly interchangeable at this speed.
