@@ -1,10 +1,10 @@
 import numpy as np
 
-robot = 'go2'  # 'aliengo', 'go1', 'go2', 'b2', 'hyqreal2', 'z1', 'piper_l', 'a2', "pegasus"
+robot = 'b2'  # 'aliengo', 'go1', 'go2', 'b2', 'hyqreal2', 'z1', 'piper_l', 'a2', "pegasus"
 
 
-USE_MUJOCO_SIMULATION = False
-USE_MUJOCO_RENDER = USE_MUJOCO_SIMULATION = False
+USE_MUJOCO_SIMULATION = True
+USE_MUJOCO_RENDER = USE_MUJOCO_SIMULATION
 
 # ----------------------------------------------------------------------------------------------------------------
 if(robot == "aliengo"):

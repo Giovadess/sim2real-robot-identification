@@ -57,6 +57,8 @@ DEFAULT_SEED = 12  # best of 30 candidates for the Go2 in the MuJoCo identifiabi
 DEFAULT_SPEED_SCALE = 0.5
 DEFAULT_DURATION = 24.0  # [s], about the duration of the chirp
 RAMP_DURATION = 2.0  # [s], smooth transition from the start posture and back to it
+RESET_RAMP_MAX_VELOCITY = 1.0  # [rad/s], peak velocity of the reset ramp before a chirp or an excitation
+RESET_RAMP_TOLERANCE = 0.02  # [rad], no reset ramp if every joint is already this close to the start
 # Default bound of the reference velocity: joint range / 0.15 s, about 2/3 of the fastest chirp cycle
 # (a 0.2 s period covers the range in 0.1 s). With the low gains used for sys-id the robot follows less than that.
 VELOCITY_TIME_CONSTANT = 0.15  # [s]
@@ -202,6 +204,26 @@ def add_start_end_ramps(positions, start, frequency, ramp_duration=RAMP_DURATION
     weight[:k] = smoothstep
     weight[n - k:] = smoothstep[::-1]
     return start + weight[:, None] * (positions - start)
+
+
+def reset_ramp_trajectory(current, target, frequency, min_duration=RAMP_DURATION,
+                          max_velocity=RESET_RAMP_MAX_VELOCITY):
+    """Smooth move from the measured posture to the first posture of a trajectory, before it is recorded.
+
+    After a trajectory the gains are zero and the joints rest wherever they fell: without this ramp the next
+    trajectory would start with a step of the reference at full gains. The duration is at least min_duration
+    and long enough that the peak velocity of the smoothstep (1.5 * distance / duration) stays below
+    max_velocity [rad/s].
+    """
+    current = np.asarray(current, dtype=float).reshape(-1)
+    target = np.asarray(target, dtype=float).reshape(-1)
+    distance = float(np.max(np.abs(target - current), initial=0.0))
+    duration = max(min_duration, 1.5 * distance / max_velocity)
+    n = max(int(round(duration * frequency)), 1) + 1
+    x = np.linspace(0.0, 1.0, n)
+    smoothstep = x * x * (3 - 2 * x)
+    positions = current + smoothstep[:, None] * (target - current)
+    return JointTrajectory(positions, frequency, "reset", label="reset ramp")
 
 
 def mirror_leg_to_quadruped(leg_positions, mirror_right_hips=True):

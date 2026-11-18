@@ -67,6 +67,7 @@ USE_MUJOCO_SIMULATION = config.USE_MUJOCO_SIMULATION
 
 
 CONTROL_FREQ = config.frequency_collection # Hz 
+STATE_TIMEOUT_SEC = 0.1
 JOINT_NAMES = [f"{leg}_{joint}" for leg in ("FL", "FR", "RL", "RR") for joint in ("hip", "thigh", "calf")]
 
 
@@ -74,7 +75,7 @@ class Data_Collection_Node(Node):
     def __init__(self):
         super().__init__('Data_Collection_Node')
         # Subscribers and Publishers
-        self.subscription_blind_state = self.create_subscription(BlindState,"/blind_state", self.get_blind_state_callback, 1)
+        self.subscription_blind_state = self.create_subscription(BlindState,"/blind_state_legged", self.get_blind_state_callback, 1)
         self.publisher_control_signal = self.create_publisher(ControlSignal,"/control_signal_legged", 1)
         self.sequence_id = 0 # To keep track of the last msg sent, useful for debugging and synchronization
         self.timer = self.create_timer(1.0/CONTROL_FREQ, self.compute_control)
@@ -82,6 +83,8 @@ class Data_Collection_Node(Node):
 
         # Safety check to not do anything until a first base and blind state are received
         self.first_message_joints_arrived = False 
+        self.last_joint_state_time = None
+        self.joint_state_fault = False
 
         # Timing stuff
         self.loop_time = 0.002
@@ -132,6 +135,13 @@ class Data_Collection_Node(Node):
         self.pending_trajectory = None
         self.trajectory = None
         self.setpoint_preview = None  # posture shown in the viewer while waiting for confirmation
+        self.reset_ramp = None  # move to the start posture before a chirp or an excitation (not recorded)
+        self.reset_start_time = None
+        self.measured_joint_positions = None  # flattened, updated at every control step
+        # Ramp from the measured posture to the idle posture at the first control step, instead of a step at full gains
+        self.startup_ramp = None
+        self.startup_ramp_start_time = None
+        self.startup_ramp_checked = False
 
         # Joint box of the chirp and of the excitation (front-left leg)
         self.leg_setpoint_1 = self.mjModel.key_qpos[keyframe_sys_id_1][7:10].copy()
@@ -150,9 +160,18 @@ class Data_Collection_Node(Node):
 
 
     def get_blind_state_callback(self, msg):
-        
-        self.joint_positions = np.array(msg.joints_position)
-        self.joint_velocities = np.array(msg.joints_velocity)
+        if self.joint_state_fault:
+            return
+        positions = np.asarray(msg.joints_position, dtype=float)
+        velocities = np.asarray(msg.joints_velocity, dtype=float)
+        if (positions.shape != (12,) or velocities.shape != (12,)
+                or not np.isfinite(positions).all() or not np.isfinite(velocities).all()):
+            self.joint_state_fault = True
+            self.get_logger().error("Invalid B2 joint state; commands stopped. Restart after checking the driver.")
+            return
+        self.joint_positions = positions
+        self.joint_velocities = velocities
+        self.last_joint_state_time = time.monotonic()
 
         self.first_message_joints_arrived = True
 
@@ -190,8 +209,22 @@ class Data_Collection_Node(Node):
         self.pending_trajectory = trajectory
 
     def start_trajectory(self):
-        """Start timing only after the operator has approved the trajectory."""
-        self.trajectory = self.pending_trajectory
+        """Start timing only after the operator has approved the trajectory.
+
+        A chirp or an excitation is preceded by a reset ramp (not recorded) from the measured joint positions
+        to its first posture, so that it never starts with a step of the reference at full gains.
+        """
+        trajectory = self.pending_trajectory
+        self.startup_ramp = None  # a trajectory started during the startup ramp replaces it
+        if trajectory.name in ("trajectory", "excitation") and self.measured_joint_positions is not None:
+            first_posture = trajectory.sample(0.0)
+            if np.max(np.abs(first_posture - self.measured_joint_positions)) > collection_trajectories.RESET_RAMP_TOLERANCE:
+                reset_ramp = collection_trajectories.reset_ramp_trajectory(
+                    self.measured_joint_positions, first_posture, CONTROL_FREQ)
+                print(f"Reset ramp to the start posture: {reset_ramp.duration:.1f} s (not recorded).")
+                self.reset_start_time = time.time()
+                self.reset_ramp = reset_ramp  # set before the trajectory: compute_control runs in another thread
+        self.trajectory = trajectory
         self.pending_trajectory = None
         self.setpoint_preview = None
         self.start_collection_time = time.time()
@@ -304,8 +337,13 @@ class Data_Collection_Node(Node):
         simulation_dt = self.loop_time
 
         # Safety check to not do anything until a first base and blind state are received
-        if(not USE_MUJOCO_SIMULATION and self.first_message_joints_arrived==False):
-            return
+        if not USE_MUJOCO_SIMULATION:
+            if self.joint_state_fault or not self.first_message_joints_arrived:
+                return
+            if time.monotonic() - self.last_joint_state_time > STATE_TIMEOUT_SEC:
+                self.joint_state_fault = True
+                self.get_logger().error("B2 joint state timed out; commands stopped. Restart after checking the driver.")
+                return
 
 
         # Update the mujoco model
@@ -339,13 +377,44 @@ class Data_Collection_Node(Node):
         joints_vel[1] = qvel[9:12]
         joints_vel[2] = qvel[12:15]
         joints_vel[3] = qvel[15:18]
-    
-        if(not self.console.isActivated):
+        self.measured_joint_positions = joints_pos.flatten().copy()
+
+        if(not self.startup_ramp_checked):
+            # First control step with a measured posture: ramp to the idle posture if it is not already there
+            self.startup_ramp_checked = True
+            idle_posture = self.idle_joint_positions.flatten()
+            if np.max(np.abs(idle_posture - self.measured_joint_positions)) > collection_trajectories.RESET_RAMP_TOLERANCE:
+                self.startup_ramp = collection_trajectories.reset_ramp_trajectory(
+                    self.measured_joint_positions, idle_posture, CONTROL_FREQ)
+                self.startup_ramp_start_time = time.time()
+                print(f"Startup ramp to the idle posture: {self.startup_ramp.duration:.1f} s.")
+
+        if(not self.console.isActivated and self.startup_ramp is not None):
+            startup_elapsed_time = time.time() - self.startup_ramp_start_time
+            desired_joint_pos = self.startup_ramp.sample(startup_elapsed_time).reshape(4, 3)
+            Kp = self.Kp
+            Kd = self.Kd
+            if self.startup_ramp.done(startup_elapsed_time, joints_pos.flatten()):
+                self.startup_ramp = None
+                print("Idle posture reached.")
+
+        elif(not self.console.isActivated):
             desired_joint_pos = copy.deepcopy(self.idle_joint_positions)
 
             # Impedence Loop
             Kp = self.Kp
             Kd = self.Kd
+
+        elif(self.reset_ramp is not None):
+            # Reset ramp to the start posture with the nominal gains, not recorded
+            reset_elapsed_time = time.time() - self.reset_start_time
+            desired_joint_pos = self.reset_ramp.sample(reset_elapsed_time).reshape(4, 3)
+            Kp = self.Kp
+            Kd = self.Kd
+            if self.reset_ramp.done(reset_elapsed_time, joints_pos.flatten()):
+                self.start_collection_time = time.time()
+                self.reset_ramp = None
+                print("Start posture reached, collection started.")
 
         elif(self.trajectory is not None):
             # The whole trajectory is precomputed: sample it at the elapsed time

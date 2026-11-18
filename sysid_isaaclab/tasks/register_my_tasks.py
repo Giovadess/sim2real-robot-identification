@@ -44,3 +44,12 @@ gym.register(
         "env_cfg_entry_point": "tasks.piper_l_pace_env_cfg:PiperLPaceEnvCfg",
     },
 )
+
+gym.register(
+    id="IsaacLab-Pace-b2",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": "tasks.b2_pace_env_cfg:B2PaceEnvCfg",
+    },
+)

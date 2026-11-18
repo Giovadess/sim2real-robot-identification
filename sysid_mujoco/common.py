@@ -223,11 +223,30 @@ def build_fixed_base_model_xml(
     # Fix the floating base and discard keyframes tied to its old state layout.
     # Base-motion sensors are not part of the joint trajectory fitting objective.
     _remove_all_by_tag(root, "freejoint")
+    for parent in root.iter():
+        for joint in list(parent.findall("joint")):
+            if joint.get("type") == "free":
+                parent.remove(joint)
     _remove_all_by_tag(root, "keyframe")
     _remove_all_by_tag(root, "accelerometer")
     _remove_all_by_tag(root, "gyro")
     _remove_all_by_tag(root, "framepos")
     _remove_all_by_tag(root, "framequat")
+    sensor_element = root.find("sensor")
+    if sensor_element is None:
+        sensor_element = ET.SubElement(root, "sensor")
+    observed_joints = {
+        sensor.get("joint") for sensor in sensor_element.findall("jointpos")
+    }
+    actuator_element = root.find("actuator")
+    if actuator_element is not None:
+        for actuator in actuator_element:
+            joint_name = actuator.get("joint")
+            if joint_name and joint_name not in observed_joints:
+                ET.SubElement(sensor_element, "jointpos", {
+                    "name": f"{joint_name}_pos", "joint": joint_name,
+                })
+                observed_joints.add(joint_name)
     if actuator_mode == "general":
         _rewrite_actuators_as_general(root, actuator_gains=actuator_gains)
     elif actuator_mode != "motor":
