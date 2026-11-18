@@ -1,6 +1,6 @@
 # B2 PACE-style system identification in Isaac Lab
 
-Status 2026-11-18: task written, **not yet run** (no Isaac Lab environment on the laptop, see Blockers).
+Status 2026-11-19: **fit done and validated on the held-out recording** (see Results). Fitted parameters: `robot_model/b2/isaaclab_identified_parameters.py`.
 
 ## What was added
 - `sysid_isaaclab/tasks/b2_pace_env_cfg.py`: task `IsaacLab-Pace-b2` (go2 layout: 49 parameters = armature, damping, friction, bias, delay).
@@ -18,10 +18,17 @@ Status 2026-11-18: task written, **not yet run** (no Isaac Lab environment on th
 ## Command (needs the pixi `isaaclab` environment)
 ```bash
 cd ~/mujoco_dev/sim2real-robot-identification   # config.py must have robot = 'b2'
-pixi run -e isaaclab python sysid_isaaclab/my_fit.py --num_envs 4096        # CMA-ES
+pixi run -e isaaclab python sysid_isaaclab/my_fit.py --num_envs 4096        # CMA-ES (no --headless flag in Isaac Lab 3.0)
 # inertial parameters: add e.g. --identify-link-mass physics=physx
 ```
-`num_envs` should be a multiple of 20. `labserver` is the better home for 8192+ envs; paths there differ.
+`num_envs` should be a multiple of 20 (4096 runs 4080 envs = 204 candidates x 20 recordings). `labserver` is the better home for 8192+ envs; paths there differ.
+
+Validation on a recording that was not fitted (fixed parameters, no optimization):
+```bash
+pixi run -e isaaclab python sysid_isaaclab/replay_heldout.py \
+    --params sysid_isaaclab/pace-sim2real/logs/pace/b2_sim/<run>/mean_143.pt \
+    --dataset datasets/b2/sideways_14.pt datasets/b2/sideways_1.pt --baseline
+```
 
 ## Assumptions to check
 - Stiffness 100 / damping 5 (the saved kp/kd). The task has one value for all joints; `my_fit.py` rejects recordings with different gains.
@@ -31,6 +38,22 @@ pixi run -e isaaclab python sysid_isaaclab/my_fit.py --num_envs 4096        # CM
 - Base is fixed by the PACE env as for the other robots; the rig (belly support) is not modelled.
 - The USD joint drive/armature (`mjc:armature = 0.1`) is overwritten by the optimizer parameters.
 
-## Blockers
-- `pixi run -e isaaclab` environment not installed on this laptop (`.pixi/envs` missing; Isaac Lab 3.0.0 plus torch from NVIDIA/PyTorch indexes). Install with `pixi install -e isaaclab`.
-- Nothing here was executed in Isaac Lab; first run should check that the first-iteration loss is sensible and that `sideways_14` validation (replay with the best parameters) is done separately.
+## Results (run `26_11_18_22-29-28`, laptop RTX 5060, 4096 envs, ~21 s/iteration)
+- CMA-ES stopped at iteration 144 (max 200, the `epsilon` stop criterion). Best candidate score 0.00283 (iteration 0) -> 0.00072; flat after about iteration 100.
+- Logs/checkpoints: `sysid_isaaclab/pace-sim2real/logs/pace/b2_sim/26_11_18_22-29-28/` (not committed); `mean_143.pt` = 49 sim params of the CMA-ES mean (armature 12, damping 12, friction 12, bias 12, delay 1).
+- Held-out replay of `mean_143.pt` (`replay_heldout.py`, rms of sim - real joint position over all joints, rad):
+
+| recording | fitted | nominal (armature 0.1, damping 1, friction 0, delay 0) |
+|---|---|---|
+| `sideways_14` (held out) | 0.0087 (max 0.031) | 0.0377 |
+| `sideways_1` (fit) | 0.0076 | 0.0385 |
+| `sideways_12` (fit) | 0.0080 | 0.0381 |
+
+  Held-out error is about 8-14% above the training error and 4.3x below the nominal model. The replay reproduces the fit score (0.0007-0.0008 on training files), so it uses the same metric as the fit.
+- Parameter ranges: armature 0.05-0.47 (hip < thigh < calf), friction 2.3-3.1 (hip, thigh) and 6.2-8.4 (calf), damping 0.8-4.2, delay 0.61 steps.
+- The simulator truncates the delay to an integer, so the effective delay is **0 steps**; the improvement comes from armature, friction and damping. A 0-5 step bound is wider than needed.
+- Comparison with the MuJoCo fit (`sysid_mujoco/results/b2/final_all21`): per-joint armature and friction agree (correlation 0.97 and 0.99, same means 0.23 and about 4.3). **Damping does not agree** (correlation 0.09; calf damping 1.1-1.7 here vs 1.3-7.0 in MuJoCo, where RL calf sits at its bound of 7). It is weakly identified: at this speed, dry friction and damping are partly interchangeable. MuJoCo's calf friction is capped at its bound of 7.0 on three joints; here the bound of 10 is not reached.
+
+## Open items
+- Velocity limits (23 / 23 / 14 rad/s) are still assumed: `B2+User+Manual.pdf` is a user guide and has no joint specs. They do not matter for these recordings (peak joint speed about 1 rad/s), only for faster motions.
+- Only one recording was held out, and all data are slow (speed scale 0.3), fixed base on the rig.
