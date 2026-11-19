@@ -1,0 +1,14 @@
+# B2 identified parameters (Isaac Lab / PACE): mean of CMA-ES at iteration 143.
+# Fit: 20 real sideways recordings (datasets/b2/sideways_*.pt without sideways_14), 4096 envs, kp=100, kd=5.
+# Held-out sideways_14 replay: rms 0.0087 rad (nominal model: 0.0377 rad); see sysid_isaaclab/replay_heldout.py.
+# Order: FL_hip, FL_thigh, FL_calf, FR_hip, FR_thigh, FR_calf, RL_hip, RL_thigh, RL_calf, RR_hip, RR_thigh, RR_calf
+armature = [0.09274006634950638, 0.17894206941127777, 0.3847358226776123, 0.12008873373270035, 0.1410508155822754, 0.44124636054039, 0.08949188888072968, 0.15425632894039154, 0.47201013565063477, 0.04641764983534813, 0.15626436471939087, 0.364768922328949]
+viscous_friction = [3.6811976432800293, 1.5729182958602905, 1.082211971282959, 4.246136665344238, 2.7687530517578125, 1.0465824604034424, 1.4282200336456299, 0.8275148272514343, 1.0474765300750732, 3.928321599960327, 3.6634039878845215, 1.6373159885406494]
+dynamic_friction = [3.117905616760254, 2.9382073879241943, 7.32740592956543, 2.979374408721924, 2.349820613861084, 7.877301216125488, 3.0709962844848633, 3.010183572769165, 8.40671443939209, 2.510951519012451, 2.911743640899658, 6.202816963195801]
+bias = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+delay = 0.6132869720458984  # sim steps (dt = 0.005 s); the simulator truncates it to an integer, i.e. 0
+
+Kp = 100.0
+Kd = 5.0
+
+# Per-joint damping differs from the MuJoCo fit of the same data; dry friction and damping are partly interchangeable at this speed.
